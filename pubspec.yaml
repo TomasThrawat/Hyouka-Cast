@@ -24,7 +24,7 @@ dependency_overrides:
   flutter_webrtc:
     git:
       url: https://github.com/TomasThrawat/hyouka-cast-webrtc-android.git
-      ref: 0a51dc9192c881e0f919ff01ea5734d2e9cc1b98
+      ref: 631cc2ea3e43684d2c2b85b53b81f00c6bc59456
 
 flutter:
   uses-material-design: true

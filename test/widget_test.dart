@@ -36,7 +36,7 @@ void main() {
     expect(find.text('Hyouka Cast'), findsOneWidget);
     expect(find.text('Mirror your phone'), findsOneWidget);
     expect(find.text('CONNECT & SHARE'), findsOneWidget);
-    expect(find.text('Up to 1280 × 720 / 60 fps, hardware permitting'), findsOneWidget);
+    expect(find.text('Up to 1920 × 1080 / 60 fps, hardware permitting'), findsOneWidget);
     expect(find.text('Live video stats'), findsOneWidget);
     expect(find.text('Waiting for stream stats…'), findsOneWidget);
     expect(find.text('START TV RECEIVER'), findsNothing);

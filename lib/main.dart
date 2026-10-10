@@ -634,7 +634,7 @@ class _CastHomePageState extends State<CastHomePage> {
       if (mounted) {
         setState(() {
           _sharing = true;
-          _status = 'Sharing screen. Target is up to 60 fps at up to 1280 × 720, depending on hardware.';
+          _status = 'Sharing screen. Target is up to 60 fps at up to 1920 × 1080, depending on hardware.';
         });
       }
       _startStreamStats();
@@ -819,7 +819,7 @@ class _CastHomePageState extends State<CastHomePage> {
     ),
     const SizedBox(height: 18),
     _detail(Icons.speed, 'WebRTC stream', 'Direct peer-to-peer video on local Wi-Fi'),
-    _detail(Icons.high_quality, 'Capture target', 'Up to 1280 × 720 / 60 fps, hardware permitting'),
+    _detail(Icons.high_quality, 'Capture target', 'Up to 1920 × 1080 / 60 fps, hardware permitting'),
     _detail(Icons.monitor_heart_outlined, 'Live video stats', _streamStatsText),
     _detail(Icons.wifi, 'Network', 'Same access point; client isolation must be off'),
   ]);

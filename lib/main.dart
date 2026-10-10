@@ -169,21 +169,30 @@ class _CastHomePageState extends State<CastHomePage> {
       return;
     }
 
-    // Reject only a real active socket or another handshake in progress. A
-    // closed socket can otherwise remain in _socket and cause every reconnect
-    // to receive HTTP 409 even though the phone has already disconnected.
-    final currentSocket = _socket;
-    if (_receiverUpgradePending ||
-        (currentSocket != null && currentSocket.readyState == WebSocket.open)) {
+    // A valid new pairing replaces the previous session. Keeping the old
+    // socket reference alive can make every retry fail with HTTP 409 if its
+    // close handshake is delayed. Only another in-flight upgrade is rejected.
+    if (_receiverUpgradePending) {
       request.response.statusCode = HttpStatus.conflict;
       await request.response.close();
       return;
     }
-    if (currentSocket != null) _socket = null;
 
     _receiverUpgradePending = true;
     WebSocket? socket;
     try {
+      final previousSocket = _socket;
+      _socket = null;
+      try {
+        await _socketSub?.cancel();
+      } catch (_) {}
+      _socketSub = null;
+      if (previousSocket != null && previousSocket.readyState == WebSocket.open) {
+        try {
+          await previousSocket.close().timeout(const Duration(seconds: 2));
+        } catch (_) {}
+      }
+
       socket = await WebSocketTransformer.upgrade(request);
       _socket = socket;
       _listen(socket);

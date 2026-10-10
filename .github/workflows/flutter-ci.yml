@@ -10,8 +10,6 @@ permissions:
   actions: read
   contents: read
   pull-requests: read
-  id-token: write
-  attestations: write
 
 jobs:
   build-arm32:
@@ -26,7 +24,7 @@ jobs:
       android-project-name: hyouka_cast
       android-organization: com.hyouka
       run-emulator-tests: false
-      run-security-audit: false
+      run-security-audit: true
       fail-on-security-findings: false
       artifact-name: hyouka-cast-armeabi-v7a
       enable-targeted-pr-tests: false

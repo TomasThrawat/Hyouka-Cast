@@ -12,7 +12,7 @@ const _castPlatform = MethodChannel('cast_android');
 
 const _port = 38741;
 const int _targetFrameRate = 60;
-const int _screenShareMaxBitrateBps = 4000000;
+const int _screenShareMaxBitrateBps = 8000000;
 const Duration _statsSampleInterval = Duration(seconds: 2);
 const _black = Color(0xFF000000);
 const _white = Color(0xFFFFFFFF);
@@ -416,14 +416,15 @@ class _CastHomePageState extends State<CastHomePage> {
         encodings.first
           ..maxFramerate = _targetFrameRate
           ..maxBitrate = _screenShareMaxBitrateBps;
-        // Prefer preserving motion smoothness; WebRTC may reduce resolution
-        // under load instead of letting the frame queue grow stale.
-        parameters.degradationPreference = RTCDegradationPreference.MAINTAIN_FRAMERATE;
+        // Preserve image detail under load; WebRTC may lower frame rate rather
+        // than aggressively reducing resolution. Keep bitrate high enough for
+        // readable text and fine details on a local Wi-Fi link.
+        parameters.degradationPreference = RTCDegradationPreference.MAINTAIN_RESOLUTION;
         final applied = await sender.setParameters(parameters);
         debugPrint(
           '[HyoukaCast][Video] encoder cap=$_targetFrameRate fps, '
           'bitrate=$_screenShareMaxBitrateBps bps, '
-          'maintain-framerate; applied=$applied',
+          'maintain-resolution; applied=$applied',
         );
       }
     } catch (error) {

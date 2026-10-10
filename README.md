@@ -17,6 +17,6 @@ Android 14+ requires fresh consent for each MediaProjection capture session. See
 
 ## CI
 
-The app calls TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml pinned to commit ccb67192213f010f32072a3ef66ca4b3f7538366. The planned matrix builds separate APK artifacts for armeabi-v7a, arm64-v8a and x86_64 instead of targeting a single architecture. Dependency upgrades are not automatic.
+The app calls TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml pinned to commit 4c901733066d54e9628b21973dc0badd8f2bd36d. CI builds only two APK artifacts: arm64-v8a for the phone and armeabi-v7a (ARM 32-bit) for the TV. x86_64 is intentionally not built. Dependency upgrades are not automatic.
 
 Local signaling uses TCP port 38741 on the TV. Router/client isolation must permit traffic between devices.

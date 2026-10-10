@@ -61,27 +61,3 @@ jobs:
       forbid-permissions: ''
       fail-on-new-warnings: false
       generate-artifact-attestation: false
-
-  build-x64:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@4c901733066d54e9628b21973dc0badd8f2bd36d
-    with:
-      run-analyze: true
-      run-tests: true
-      check-format: false
-      build-apk: true
-      target-platform: android-x64
-      generate-android: true
-      android-project-name: hyouka_cast
-      android-organization: com.hyouka
-      run-emulator-tests: false
-      run-security-audit: false
-      fail-on-security-findings: false
-      artifact-name: hyouka-cast-x86-64
-      enable-targeted-pr-tests: false
-      run-apk-smoke-test: true
-      min-coverage-percent: 0
-      max-apk-size-mb: 0
-      max-apk-entry-size-mb: 0
-      forbid-permissions: ''
-      fail-on-new-warnings: false
-      generate-artifact-attestation: false

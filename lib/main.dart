@@ -76,6 +76,7 @@ class _CastHomePageState extends State<CastHomePage> {
   final _renderer = RTCVideoRenderer();
   final List<RTCIceCandidate> _pendingIce = [];
   HttpServer? _http;
+  bool _receiverUpgradePending = false;
   StreamSubscription<HttpRequest>? _httpSub;
   StreamSubscription<dynamic>? _socketSub;
   WebSocket? _socket;
@@ -167,21 +168,37 @@ class _CastHomePageState extends State<CastHomePage> {
       await request.response.close();
       return;
     }
-    if (_socket != null) {
+
+    // Reject only a real active socket or another handshake in progress. A
+    // closed socket can otherwise remain in _socket and cause every reconnect
+    // to receive HTTP 409 even though the phone has already disconnected.
+    final currentSocket = _socket;
+    if (_receiverUpgradePending ||
+        (currentSocket != null && currentSocket.readyState == WebSocket.open)) {
       request.response.statusCode = HttpStatus.conflict;
       await request.response.close();
       return;
     }
+    if (currentSocket != null) _socket = null;
+
+    _receiverUpgradePending = true;
+    WebSocket? socket;
     try {
-      final socket = await WebSocketTransformer.upgrade(request);
+      socket = await WebSocketTransformer.upgrade(request);
       _socket = socket;
-      await _createPeer();
       _listen(socket);
-      if (mounted) setState(() => _status = 'Phone paired. Waiting for the screen…');
+      await _createPeer();
+      if (mounted && identical(_socket, socket)) {
+        setState(() => _status = 'Phone paired. Waiting for the screen…');
+      }
     } catch (e) {
+      if (identical(_socket, socket)) _socket = null;
+      try {
+        await socket?.close();
+      } catch (_) {}
       if (mounted) setState(() => _status = 'Connection failed: $e');
-      await _socket?.close();
-      _socket = null;
+    } finally {
+      _receiverUpgradePending = false;
     }
   }
 
@@ -219,10 +236,18 @@ class _CastHomePageState extends State<CastHomePage> {
     _socketSub = socket.listen(
       (data) => _handleSignal(data),
       onDone: () {
-        if (mounted && identical(_socket, socket)) setState(() => _status = 'Phone disconnected.');
+        final isCurrentSocket = identical(_socket, socket);
+        if (isCurrentSocket) _socket = null;
+        if (mounted && isCurrentSocket) {
+          setState(() => _status = 'Phone disconnected.');
+        }
       },
       onError: (Object e) {
-        if (mounted) setState(() => _status = 'Local socket error: $e');
+        final isCurrentSocket = identical(_socket, socket);
+        if (isCurrentSocket) _socket = null;
+        if (mounted && isCurrentSocket) {
+          setState(() => _status = 'Local socket error: $e');
+        }
       },
     );
   }

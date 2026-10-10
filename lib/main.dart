@@ -91,7 +91,7 @@ class _CastHomePageState extends State<CastHomePage> {
   List<String> _addresses = [];
 
   _Mode _effectiveMode(BuildContext context) =>
-      _mode ?? (MediaQuery.sizeOf(context).shortestSide >= 600 ? _Mode.tv : _Mode.phone);
+      _mode ?? (MediaQuery.sizeOf(context).width >= 800 ? _Mode.tv : _Mode.phone);
 
   @override
   void dispose() {

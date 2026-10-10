@@ -10,6 +10,8 @@ permissions:
   actions: read
   contents: read
   pull-requests: read
+  id-token: write
+  attestations: write
 
 jobs:
   build-arm32:

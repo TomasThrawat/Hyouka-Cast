@@ -437,10 +437,12 @@ class _CastHomePageState extends State<CastHomePage> {
       final offer = await _peer!.createOffer();
       await _peer!.setLocalDescription(offer);
       _send({'type': 'offer', 'sdp': offer.sdp});
-      if (mounted) setState(() {
-        _sharing = true;
-        _status = 'Sharing screen. Target is up to 720p at 30 fps when supported.';
-      });
+      if (mounted) {
+        setState(() {
+          _sharing = true;
+          _status = 'Sharing screen. Target is up to 720p at 30 fps when supported.';
+        });
+      }
     } catch (e) {
       await _stopSharing(updateStatus: false);
       if (mounted) setState(() => _status = 'Could not start sharing: $e');
@@ -464,10 +466,12 @@ class _CastHomePageState extends State<CastHomePage> {
     if (FlutterBackground.isBackgroundExecutionEnabled) {
       try { await FlutterBackground.disableBackgroundExecution(); } catch (_) {}
     }
-    if (mounted) setState(() {
-      _sharing = false;
-      if (updateStatus) _status = 'Sharing stopped.';
-    });
+    if (mounted) {
+      setState(() {
+        _sharing = false;
+        if (updateStatus) _status = 'Sharing stopped.';
+      });
+    }
   }
 
   Future<void> _stopReceiver() async {
@@ -484,12 +488,14 @@ class _CastHomePageState extends State<CastHomePage> {
     if (_rendererReady) _renderer.srcObject = null;
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     await SystemChrome.setPreferredOrientations(const []);
-    if (mounted) setState(() {
-      _receiverRunning = false;
-      _pin = '';
-      _addresses = [];
-      _status = 'Receiver stopped.';
-    });
+    if (mounted) {
+      setState(() {
+        _receiverRunning = false;
+        _pin = '';
+        _addresses = [];
+        _status = 'Receiver stopped.';
+      });
+    }
   }
 
   Future<void> _copy(String value) async {

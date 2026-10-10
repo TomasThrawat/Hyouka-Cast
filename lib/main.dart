@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+const _castPlatform = MethodChannel('cast_android');
+
 const _port = 38741;
 const _black = Color(0xFF000000);
 const _white = Color(0xFFFFFFFF);
@@ -82,7 +84,8 @@ class _CastHomePageState extends State<CastHomePage> {
   WebSocket? _socket;
   RTCPeerConnection? _peer;
   MediaStream? _screen;
-  _Mode? _mode;
+  bool _tvRoleKnown = false;
+  bool _isTvDevice = false;
   bool _rendererReady = false;
   bool _receiverRunning = false;
   bool _sharing = false;
@@ -91,8 +94,36 @@ class _CastHomePageState extends State<CastHomePage> {
   String _status = 'Ready';
   List<String> _addresses = [];
 
-  _Mode _effectiveMode(BuildContext context) =>
-      _mode ?? (MediaQuery.sizeOf(context).width >= 800 ? _Mode.tv : _Mode.phone);
+  @override
+  void initState() {
+    super.initState();
+    _detectDeviceRole();
+  }
+
+  Future<void> _detectDeviceRole() async {
+    try {
+      final isTv = await _castPlatform.invokeMethod<bool>('isTvDevice') ?? false;
+      if (!mounted) return;
+      setState(() {
+        _isTvDevice = isTv;
+        _tvRoleKnown = true;
+      });
+    } catch (_) {
+      // Keep the UI usable in widget tests or on a platform without the helper.
+      if (!mounted) return;
+      setState(() {
+        _isTvDevice = MediaQuery.sizeOf(context).width >= 800;
+        _tvRoleKnown = true;
+      });
+    }
+  }
+
+  _Mode _effectiveMode(BuildContext context) {
+    final isTv = _tvRoleKnown
+        ? _isTvDevice
+        : MediaQuery.sizeOf(context).width >= 800;
+    return isTv ? _Mode.tv : _Mode.phone;
+  }
 
   @override
   void dispose() {
@@ -367,6 +398,10 @@ class _CastHomePageState extends State<CastHomePage> {
           notificationImportance: AndroidNotificationImportance.normal,
           notificationIcon: AndroidResource(name: 'ic_stat_cast', defType: 'drawable'),
           enableWifiLock: true,
+          // The foreground service is allowed without excluding this app from
+          // battery optimization. Requiring that exemption made initialize()
+          // return false on devices where the user had not granted it.
+          shouldRequestBatteryOptimizationsOff: false,
         ),
       );
       if (!initialized) throw StateError('Could not initialize the screen-sharing service.');
@@ -508,14 +543,7 @@ class _CastHomePageState extends State<CastHomePage> {
             child: ListView(
               padding: const EdgeInsets.all(22),
               children: [
-                Row(children: [
-                  Expanded(child: _modeButton('PHONE  →  TV', Icons.screen_share, mode == _Mode.phone,
-                    () => setState(() => _mode = _Mode.phone))),
-                  const SizedBox(width: 10),
-                  Expanded(child: _modeButton('TV RECEIVER', Icons.tv, mode == _Mode.tv,
-                    () => setState(() => _mode = _Mode.tv))),
-                ]),
-                const SizedBox(height: 28),
+                const SizedBox(height: 8),
                 if (mode == _Mode.phone) _phonePanel(),
                 if (mode == _Mode.tv) _tvPanel(),
                 const SizedBox(height: 24),
@@ -539,18 +567,6 @@ class _CastHomePageState extends State<CastHomePage> {
       ),
     );
   }
-
-  Widget _modeButton(String text, IconData icon, bool selected, VoidCallback onPressed) =>
-      OutlinedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 18, color: _white),
-        label: Text(text, style: const TextStyle(color: _white, fontSize: 12, letterSpacing: .4)),
-        style: OutlinedButton.styleFrom(
-          side: BorderSide(color: selected ? _white : _border),
-          padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
 
   Widget _phonePanel() => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     const Icon(Icons.cast_connected, size: 40, color: _white),

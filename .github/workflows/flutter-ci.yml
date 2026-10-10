@@ -12,36 +12,71 @@ permissions:
   pull-requests: read
 
 jobs:
-  flutter-ci:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target-platform: android-arm
-            artifact-name: hyouka-cast-armeabi-v7a
-            smoke-test: false
-          - target-platform: android-arm64
-            artifact-name: hyouka-cast-arm64-v8a
-            smoke-test: false
-          - target-platform: android-x64
-            artifact-name: hyouka-cast-x86-64
-            smoke-test: true
+  build-arm32:
     uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@ccb67192213f010f32072a3ef66ca4b3f7538366
     with:
       run-analyze: true
       run-tests: true
       check-format: false
       build-apk: true
-      target-platform: ${{ matrix.target-platform }}
+      target-platform: android-arm
       generate-android: true
       android-project-name: hyouka_cast
       android-organization: com.hyouka
       run-emulator-tests: false
       run-security-audit: true
       fail-on-security-findings: false
-      artifact-name: ${{ matrix.artifact-name }}
+      artifact-name: hyouka-cast-armeabi-v7a
       enable-targeted-pr-tests: false
-      run-apk-smoke-test: ${{ matrix.smoke-test }}
+      run-apk-smoke-test: false
+      min-coverage-percent: 0
+      max-apk-size-mb: 0
+      max-apk-entry-size-mb: 0
+      forbid-permissions: ''
+      fail-on-new-warnings: false
+      generate-artifact-attestation: false
+
+  build-arm64:
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@ccb67192213f010f32072a3ef66ca4b3f7538366
+    with:
+      run-analyze: true
+      run-tests: true
+      check-format: false
+      build-apk: true
+      target-platform: android-arm64
+      generate-android: true
+      android-project-name: hyouka_cast
+      android-organization: com.hyouka
+      run-emulator-tests: false
+      run-security-audit: false
+      fail-on-security-findings: false
+      artifact-name: hyouka-cast-arm64-v8a
+      enable-targeted-pr-tests: false
+      run-apk-smoke-test: false
+      min-coverage-percent: 0
+      max-apk-size-mb: 0
+      max-apk-entry-size-mb: 0
+      forbid-permissions: ''
+      fail-on-new-warnings: false
+      generate-artifact-attestation: false
+
+  build-x64:
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@ccb67192213f010f32072a3ef66ca4b3f7538366
+    with:
+      run-analyze: true
+      run-tests: true
+      check-format: false
+      build-apk: true
+      target-platform: android-x64
+      generate-android: true
+      android-project-name: hyouka_cast
+      android-organization: com.hyouka
+      run-emulator-tests: false
+      run-security-audit: false
+      fail-on-security-findings: false
+      artifact-name: hyouka-cast-x86-64
+      enable-targeted-pr-tests: false
+      run-apk-smoke-test: true
       min-coverage-percent: 0
       max-apk-size-mb: 0
       max-apk-entry-size-mb: 0

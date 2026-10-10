@@ -282,20 +282,39 @@ class _CastHomePageState extends State<CastHomePage> {
     _socketSub = socket.listen(
       (data) => _handleSignal(data),
       onDone: () {
-        final isCurrentSocket = identical(_socket, socket);
-        if (isCurrentSocket) _socket = null;
-        if (mounted && isCurrentSocket) {
-          setState(() => _status = 'Phone disconnected.');
-        }
+        unawaited(_handleReceiverSocketClosed(socket));
       },
       onError: (Object e) {
-        final isCurrentSocket = identical(_socket, socket);
-        if (isCurrentSocket) _socket = null;
-        if (mounted && isCurrentSocket) {
-          setState(() => _status = 'Local socket error: $e');
-        }
+        unawaited(_handleReceiverSocketClosed(
+          socket,
+          status: 'Local socket error: $e',
+        ));
       },
     );
+  }
+
+  Future<void> _handleReceiverSocketClosed(
+    WebSocket socket, {
+    String status = 'Phone stopped casting. Receiver is ready.',
+  }) async {
+    if (!identical(_socket, socket)) return;
+
+    _socket = null;
+    _socketSub = null;
+    final peer = _peer;
+    _peer = null;
+    _remoteDescriptionSet = false;
+    _pendingIce.clear();
+
+    try {
+      await peer?.close();
+    } catch (_) {}
+    try {
+      await peer?.dispose();
+    } catch (_) {}
+
+    if (_rendererReady) _renderer.srcObject = null;
+    if (mounted) setState(() => _status = status);
   }
 
   Future<void> _handleSignal(dynamic data) async {

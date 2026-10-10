@@ -11,6 +11,9 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 const _castPlatform = MethodChannel('cast_android');
 
 const _port = 38741;
+const int _targetFrameRate = 60;
+const int _screenShareMaxBitrateBps = 4_000_000;
+const Duration _statsSampleInterval = Duration(seconds: 2);
 const _black = Color(0xFF000000);
 const _white = Color(0xFFFFFFFF);
 const _muted = Color(0xFFBDBDBD);
@@ -77,6 +80,13 @@ class _CastHomePageState extends State<CastHomePage> {
   final _pinInput = TextEditingController();
   final _renderer = RTCVideoRenderer();
   final List<RTCIceCandidate> _pendingIce = [];
+  Timer? _statsTimer;
+  bool _statsSampleInFlight = false;
+  int _statsGeneration = 0;
+  int? _lastVideoFrameCount;
+  int? _lastVideoBytes;
+  DateTime? _lastVideoStatsAt;
+  String _streamStatsText = 'Waiting for stream stats…';
   HttpServer? _http;
   bool _receiverUpgradePending = false;
   StreamSubscription<HttpRequest>? _httpSub;
@@ -129,6 +139,8 @@ class _CastHomePageState extends State<CastHomePage> {
 
   @override
   void dispose() {
+    _statsTimer?.cancel();
+    _statsTimer = null;
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(const []);
     _address.dispose();
@@ -286,6 +298,140 @@ class _CastHomePageState extends State<CastHomePage> {
     }
   }
 
+  double? _statNumber(Object? value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  void _startStreamStats() {
+    _statsGeneration++;
+    _statsSampleInFlight = false;
+    _statsTimer?.cancel();
+    _lastVideoFrameCount = null;
+    _lastVideoBytes = null;
+    _lastVideoStatsAt = null;
+    if (mounted) {
+      setState(() => _streamStatsText = 'Measuring video…');
+    } else {
+      _streamStatsText = 'Measuring video…';
+    }
+    unawaited(_updateStreamStats());
+    _statsTimer = Timer.periodic(_statsSampleInterval, (_) {
+      unawaited(_updateStreamStats());
+    });
+  }
+
+  void _stopStreamStats() {
+    _statsGeneration++;
+    _statsTimer?.cancel();
+    _statsTimer = null;
+    _statsSampleInFlight = false;
+    _lastVideoFrameCount = null;
+    _lastVideoBytes = null;
+    _lastVideoStatsAt = null;
+    _streamStatsText = 'Waiting for stream stats…';
+  }
+
+  Future<void> _updateStreamStats() async {
+    if (_statsSampleInFlight) return;
+    final peer = _peer;
+    if (peer == null) return;
+    final generation = _statsGeneration;
+
+    _statsSampleInFlight = true;
+    try {
+      final reports = await peer.getStats();
+      if (generation != _statsGeneration || !identical(peer, _peer)) return;
+      final wantedType = _isTvDevice ? 'inbound-rtp' : 'outbound-rtp';
+      StatsReport? videoReport;
+      for (final report in reports) {
+        if (report.type != wantedType) continue;
+        final mediaType = report.values['kind'] ?? report.values['mediaType'];
+        if (mediaType != null && mediaType.toString().toLowerCase() != 'video') {
+          continue;
+        }
+        videoReport = report;
+        break;
+      }
+      if (videoReport == null) return;
+
+      final values = videoReport.values;
+      final isReceiving = wantedType == 'inbound-rtp';
+      final framesKey = isReceiving ? 'framesDecoded' : 'framesEncoded';
+      final bytesKey = isReceiving ? 'bytesReceived' : 'bytesSent';
+      final now = DateTime.now();
+      final elapsedMs = _lastVideoStatsAt == null
+          ? 0
+          : now.difference(_lastVideoStatsAt!).inMilliseconds;
+      final frames = _statNumber(values[framesKey])?.round();
+      final bytes = _statNumber(values[bytesKey])?.round();
+      var fps = _statNumber(values['framesPerSecond']);
+      if ((fps == null || fps <= 0) &&
+          frames != null &&
+          _lastVideoFrameCount != null &&
+          elapsedMs > 0 &&
+          frames >= _lastVideoFrameCount!) {
+        fps = (frames - _lastVideoFrameCount!) * 1000 / elapsedMs;
+      }
+      double? mbps;
+      if (bytes != null &&
+          _lastVideoBytes != null &&
+          elapsedMs > 0 &&
+          bytes >= _lastVideoBytes!) {
+        mbps = (bytes - _lastVideoBytes!) * 8 / elapsedMs / 1000;
+      }
+      if (frames != null) _lastVideoFrameCount = frames;
+      if (bytes != null) _lastVideoBytes = bytes;
+      _lastVideoStatsAt = now;
+
+      final direction = isReceiving ? 'RX' : 'TX';
+      final fpsText = fps == null ? 'FPS measuring' : '${fps.round()} FPS';
+      final rateText = mbps == null ? 'bitrate measuring' : '${mbps.toStringAsFixed(1)} Mbps';
+      final nextText = '$direction · $fpsText · $rateText';
+      if (mounted && nextText != _streamStatsText) {
+        setState(() => _streamStatsText = nextText);
+      } else {
+        _streamStatsText = nextText;
+      }
+      debugPrint('[HyoukaCast][StreamStats] $nextText');
+    } catch (error) {
+      debugPrint('[HyoukaCast][StreamStats] Stats unavailable: $error');
+    } finally {
+      if (generation == _statsGeneration) _statsSampleInFlight = false;
+    }
+  }
+
+  Future<void> _configureVideoSender(RTCPeerConnection peer) async {
+    try {
+      final senders = await peer.getSenders();
+      for (final sender in senders) {
+        if (sender.track?.kind != 'video') continue;
+        final parameters = sender.parameters;
+        final encodings = parameters.encodings;
+        if (encodings == null || encodings.isEmpty) {
+          debugPrint('[HyoukaCast][Video] No RTP encoding exposed; keeping WebRTC defaults.');
+          continue;
+        }
+        encodings.first
+          ..maxFramerate = _targetFrameRate
+          ..maxBitrate = _screenShareMaxBitrateBps;
+        // Prefer preserving motion smoothness; WebRTC may reduce resolution
+        // under load instead of letting the frame queue grow stale.
+        parameters.degradationPreference = RTCDegradationPreference.MAINTAIN_FRAMERATE;
+        final applied = await sender.setParameters(parameters);
+        debugPrint(
+          '[HyoukaCast][Video] encoder cap=$_targetFrameRate fps, '
+          'bitrate=$_screenShareMaxBitrateBps bps, '
+          'maintain-framerate; applied=$applied',
+        );
+      }
+    } catch (error) {
+      // Older device codecs may reject optional RTP tuning. Keep mirroring usable.
+      debugPrint('[HyoukaCast][Video] RTP tuning unavailable; using WebRTC defaults: $error');
+    }
+  }
+
   Future<void> _createPeer() async {
     await _peer?.close();
     _peer = await createPeerConnection({
@@ -304,6 +450,7 @@ class _CastHomePageState extends State<CastHomePage> {
       await _initRenderer();
       _renderer.srcObject = event.streams.first;
       if (mounted) setState(() => _status = 'Live screen received over Wi-Fi.');
+      _startStreamStats();
     };
     _peer!.onConnectionState = (state) {
       if (!mounted) return;
@@ -479,6 +626,7 @@ class _CastHomePageState extends State<CastHomePage> {
       for (final track in _screen!.getVideoTracks()) {
         await _peer!.addTrack(track, _screen!);
       }
+      await _configureVideoSender(_peer!);
       final offer = await _peer!.createOffer();
       await _peer!.setLocalDescription(offer);
       _send({'type': 'offer', 'sdp': offer.sdp});
@@ -488,6 +636,7 @@ class _CastHomePageState extends State<CastHomePage> {
           _status = 'Sharing screen. Target is up to 60 fps at up to 1280 × 720, depending on hardware.';
         });
       }
+      _startStreamStats();
     } catch (e) {
       await _stopSharing(updateStatus: false);
       if (mounted) setState(() => _status = 'Could not start sharing: $e');
@@ -501,6 +650,7 @@ class _CastHomePageState extends State<CastHomePage> {
   }
 
   Future<void> _stopSharing({bool updateStatus = true}) async {
+    _stopStreamStats();
     for (final track in _screen?.getTracks() ?? <MediaStreamTrack>[]) {
       try { track.stop(); } catch (_) {}
     }
@@ -526,6 +676,7 @@ class _CastHomePageState extends State<CastHomePage> {
   }
 
   Future<void> _stopReceiver() async {
+    _stopStreamStats();
     try { await _socketSub?.cancel(); } catch (_) {}
     _socketSub = null;
     try { await _socket?.close(); } catch (_) {}
@@ -596,8 +747,9 @@ class _CastHomePageState extends State<CastHomePage> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
                         child: Text(
-                          'HYOUKA CAST  •  LIVE',
-                          style: const TextStyle(color: _white, fontSize: 12, letterSpacing: 1.2),
+                          'HYOUKA CAST  •  LIVE\n$_streamStatsText',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(color: _white, fontSize: 12, height: 1.5, letterSpacing: .3),
                         ),
                       ),
                     ),
@@ -667,6 +819,7 @@ class _CastHomePageState extends State<CastHomePage> {
     const SizedBox(height: 18),
     _detail(Icons.speed, 'WebRTC stream', 'Direct peer-to-peer video on local Wi-Fi'),
     _detail(Icons.high_quality, 'Capture target', 'Up to 1280 × 720 / 60 fps, hardware permitting'),
+    _detail(Icons.monitor_heart_outlined, 'Live video stats', _streamStatsText),
     _detail(Icons.wifi, 'Network', 'Same access point; client isolation must be off'),
   ]);
 
@@ -697,6 +850,7 @@ class _CastHomePageState extends State<CastHomePage> {
                 SizedBox(height: 6), Text('The mirrored screen will appear here.', style: TextStyle(color: _muted)),
               ]),
       ),
+      _detail(Icons.monitor_heart_outlined, 'Live video stats', _streamStatsText),
       const SizedBox(height: 20),
       if (_receiverRunning) ...[
         const Text('TV ADDRESSES', style: TextStyle(color: _muted, fontSize: 11, letterSpacing: 1.3)),

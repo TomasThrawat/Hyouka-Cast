@@ -292,8 +292,14 @@ class _CastHomePageState extends State<CastHomePage> {
     final host = _address.text.trim();
     final pin = _pinInput.text.trim();
     final ip = InternetAddress.tryParse(host);
-    if (ip == null || ip.type != InternetAddressType.IPv4) {
-      setState(() => _status = 'Enter the TV IPv4 address, for example 192.168.1.50.');
+    final isPrivateIpv4 = ip != null &&
+        ip.type == InternetAddressType.IPv4 &&
+        (ip.address.startsWith('192.168.') ||
+            ip.address.startsWith('10.') ||
+            _private172(ip.address));
+    if (!isPrivateIpv4) {
+      setState(() => _status =
+          'Enter the TV private Wi-Fi IPv4 address, for example 192.168.1.50.');
       return;
     }
     if (!RegExp(r'^\d{6}$').hasMatch(pin)) {

@@ -96,6 +96,8 @@ class _CastHomePageState extends State<CastHomePage> {
 
   @override
   void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setPreferredOrientations(const []);
     _address.dispose();
     _pinInput.dispose();
     _httpSub?.cancel();
@@ -136,6 +138,10 @@ class _CastHomePageState extends State<CastHomePage> {
 
   Future<void> _startReceiver() async {
     if (_receiverRunning) return;
+    await SystemChrome.setPreferredOrientations(
+      const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
+    );
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     setState(() => _status = 'Starting local Wi-Fi receiver…');
     try {
       final addresses = await _getLanAddresses();
@@ -422,6 +428,8 @@ class _CastHomePageState extends State<CastHomePage> {
     try { await _http?.close(force: true); } catch (_) {}
     _http = null;
     if (_rendererReady) _renderer.srcObject = null;
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await SystemChrome.setPreferredOrientations(const []);
     if (mounted) setState(() {
       _receiverRunning = false;
       _pin = '';
@@ -438,8 +446,17 @@ class _CastHomePageState extends State<CastHomePage> {
   @override
   Widget build(BuildContext context) {
     final mode = _effectiveMode(context);
-    return Scaffold(
-      appBar: AppBar(
+    final showFullscreenReceiver = mode == _Mode.tv &&
+        _receiverRunning && _rendererReady && _renderer.srcObject != null;
+    return PopScope<Object?>(
+      canPop: !_receiverRunning,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _receiverRunning && mounted) {
+          setState(() => _status = 'Casting stays active. Stop casting from your phone to end the session.');
+        }
+      },
+      child: Scaffold(
+      appBar: showFullscreenReceiver ? null : AppBar(
         title: const Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(Icons.cast, size: 26), SizedBox(width: 10),
           Text('Hyouka Cast', style: TextStyle(fontWeight: FontWeight.w700)),
@@ -453,7 +470,38 @@ class _CastHomePageState extends State<CastHomePage> {
           ),
         ],
       ),
-      body: SafeArea(
+      body: showFullscreenReceiver
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: _black),
+                RTCVideoView(
+                  _renderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: SafeArea(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0x99000000),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: _border),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                        child: Text(
+                          'HYOUKA CAST  •  LIVE',
+                          style: const TextStyle(color: _white, fontSize: 12, letterSpacing: 1.2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : SafeArea(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 900),
@@ -487,6 +535,7 @@ class _CastHomePageState extends State<CastHomePage> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -541,11 +590,16 @@ class _CastHomePageState extends State<CastHomePage> {
         style: TextStyle(color: _muted, height: 1.45)),
       const SizedBox(height: 20),
       Container(
-        height: 260, width: double.infinity,
+        height: 180, width: double.infinity,
         decoration: BoxDecoration(border: Border.all(color: _border), borderRadius: BorderRadius.circular(16)),
         child: connected
-            ? ClipRRect(borderRadius: BorderRadius.circular(16), child: RTCVideoView(
-                _renderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain))
+            ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.fullscreen, size: 48, color: _white),
+                SizedBox(height: 12),
+                Text('Phone screen is now full-screen.', style: TextStyle(color: _white, fontSize: 18)),
+                SizedBox(height: 6),
+                Text('Receiver stays open until casting is stopped from the phone.', style: TextStyle(color: _muted)),
+              ])
             : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon(Icons.tv, size: 54, color: _white), SizedBox(height: 14),
                 Text('Waiting for a phone', style: TextStyle(color: _white, fontSize: 18)),

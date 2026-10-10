@@ -492,18 +492,11 @@ class _CastHomePageState extends State<CastHomePage> {
       },
       child: Scaffold(
       appBar: showFullscreenReceiver ? null : AppBar(
-        title: const Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.cast, size: 26), SizedBox(width: 10),
-          Text('Hyouka Cast', style: TextStyle(fontWeight: FontWeight.w700)),
-        ]),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 16),
-            child: Center(
-              child: Text('LOCAL WI-FI', style: TextStyle(color: _muted, fontSize: 10, letterSpacing: 1.3)),
-            ),
-          ),
-        ],
+        leading: const Icon(Icons.cast, size: 24),
+        title: const Text(
+          'Hyouka Cast',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
       ),
       body: showFullscreenReceiver
           ? Stack(

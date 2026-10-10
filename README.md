@@ -11,7 +11,9 @@ Pure-black Flutter screen mirroring from an Android phone (Android 12) to an And
 
 ## Transport and performance
 
-WebRTC carries video peer-to-peer over the local network. A WebSocket on the TV exchanges SDP and ICE signaling; a pairing code gates the signaling connection. The initial capture target is 720p at 30 fps. Actual latency and frame rate depend on Wi-Fi congestion, display/encoding load and the TV decoder. For best performance, use a strong 5 GHz Wi-Fi connection, keep both devices on one access point, and disable client isolation if enabled. No cloud relay or account is required.
+WebRTC carries video peer-to-peer over the local network. A WebSocket on the TV exchanges SDP and ICE signaling; a pairing code gates the signaling connection. The Android screen capturer now requests up to 60 fps and caps the longer display edge at 1280 px and the shorter edge at 720 px, preserving the device's aspect ratio. This reduces encoder/decoder load compared with sending the full phone display, but it cannot guarantee 60 fps on every device. Actual latency and frame rate still depend on Wi-Fi congestion, display refresh, hardware encoding/decoding, thermals and the TV. For best performance, use a strong 5 GHz Wi-Fi connection, keep both devices on one access point, and disable client isolation if enabled. No cloud relay or account is required.
+
+**Audio limitation:** this build still mirrors video only. System playback audio is not captured or sent to the TV, and Hyouka Cast does not mute the phone's media output. Android playback-audio capture must be connected to the native WebRTC audio module before those behaviors can be implemented reliably.
 
 Android 14+ requires fresh consent for each MediaProjection capture session. The background service does not require the app to be exempted from battery optimization. See https://developer.android.com/about/versions/14/behavior-changes-14.
 

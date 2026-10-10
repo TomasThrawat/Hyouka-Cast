@@ -10,7 +10,11 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <application>
-        <activity android:name="com.hyouka.hyouka_cast.MainActivity" android:exported="true">
+        <activity
+            android:name="com.hyouka.hyouka_cast.MainActivity"
+            android:exported="true"
+            android:icon="@drawable/hyouka_cast_launcher"
+            android:label="Hyouka Cast">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />

@@ -88,7 +88,9 @@ class _CastHomePageState extends State<CastHomePage> {
   bool _isTvDevice = false;
   bool _rendererReady = false;
   bool _receiverRunning = false;
+  bool _startingReceiver = false;
   bool _sharing = false;
+  bool _startingSharing = false;
   bool _remoteDescriptionSet = false;
   String _pin = '';
   String _status = 'Ready';
@@ -168,13 +170,19 @@ class _CastHomePageState extends State<CastHomePage> {
   }
 
   Future<void> _startReceiver() async {
-    if (_receiverRunning) return;
-    await SystemChrome.setPreferredOrientations(
-      const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
-    );
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    setState(() => _status = 'Starting local Wi-Fi receiver…');
+    if (_receiverRunning || _startingReceiver) return;
+
+    setState(() {
+      _startingReceiver = true;
+      _status = 'Starting local Wi-Fi receiver…';
+    });
+
     try {
+      await SystemChrome.setPreferredOrientations(
+        const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
+      );
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
       final addresses = await _getLanAddresses();
       final pin = (100000 + Random.secure().nextInt(900000)).toString();
       final server = await HttpServer.bind(InternetAddress.anyIPv4, _port, shared: true);
@@ -182,7 +190,15 @@ class _CastHomePageState extends State<CastHomePage> {
       _pin = pin;
       _addresses = addresses;
       _httpSub = server.listen(_handleRequest);
-      if (!mounted) return;
+
+      if (!mounted) {
+        await _httpSub?.cancel();
+        _httpSub = null;
+        await server.close(force: true);
+        _http = null;
+        return;
+      }
+
       setState(() {
         _receiverRunning = true;
         _status = addresses.isEmpty
@@ -190,7 +206,29 @@ class _CastHomePageState extends State<CastHomePage> {
             : 'Ready. Connect your phone to this TV over the same Wi-Fi.';
       });
     } catch (e) {
+      try {
+        await _httpSub?.cancel();
+      } catch (_) {}
+      _httpSub = null;
+      try {
+        await _http?.close(force: true);
+      } catch (_) {}
+      _http = null;
+      _pin = '';
+      _addresses = [];
+
+      try {
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+        await SystemChrome.setPreferredOrientations(const []);
+      } catch (_) {}
+
       if (mounted) setState(() => _status = 'Receiver failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _startingReceiver = false);
+      } else {
+        _startingReceiver = false;
+      }
     }
   }
 
@@ -379,6 +417,8 @@ class _CastHomePageState extends State<CastHomePage> {
   }
 
   Future<void> _startSharing() async {
+    if (_sharing || _startingSharing) return;
+
     final host = _address.text.trim();
     final pin = _pinInput.text.trim();
     final ip = InternetAddress.tryParse(host);
@@ -396,7 +436,12 @@ class _CastHomePageState extends State<CastHomePage> {
       setState(() => _status = 'Enter the six-digit code shown on the TV.');
       return;
     }
-    setState(() => _status = 'Connecting to TV over Wi-Fi…');
+
+    setState(() {
+      _startingSharing = true;
+      _status = 'Connecting to TV over Wi-Fi…';
+    });
+
     try {
       final uri = Uri(
         scheme: 'ws', host: host, port: _port, path: '/signal',
@@ -446,6 +491,12 @@ class _CastHomePageState extends State<CastHomePage> {
     } catch (e) {
       await _stopSharing(updateStatus: false);
       if (mounted) setState(() => _status = 'Could not start sharing: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _startingSharing = false);
+      } else {
+        _startingSharing = false;
+      }
     }
   }
 
@@ -604,9 +655,15 @@ class _CastHomePageState extends State<CastHomePage> {
       decoration: const InputDecoration(labelText: 'Six-digit pairing code',
         prefixIcon: Icon(Icons.lock_outline, color: _white), counterText: '')),
     const SizedBox(height: 18),
-    _action(_sharing ? 'STOP SHARING' : 'CONNECT & SHARE',
-      _sharing ? Icons.stop_circle_outlined : Icons.play_arrow,
-      _sharing ? _stopSharing : _startSharing),
+    _action(
+      _sharing ? 'STOP SHARING' : _startingSharing ? 'CONNECTING…' : 'CONNECT & SHARE',
+      _sharing
+          ? Icons.stop_circle_outlined
+          : _startingSharing
+              ? Icons.hourglass_empty
+              : Icons.play_arrow,
+      _sharing ? _stopSharing : _startingSharing ? null : _startSharing,
+    ),
     const SizedBox(height: 18),
     _detail(Icons.speed, 'WebRTC stream', 'Direct peer-to-peer video on local Wi-Fi'),
     _detail(Icons.high_quality, 'Capture target', 'Up to 1280 × 720 / 60 fps, hardware permitting'),
@@ -658,13 +715,23 @@ class _CastHomePageState extends State<CastHomePage> {
         ]),
       ],
       const SizedBox(height: 14),
-      _action(_receiverRunning ? 'STOP RECEIVER' : 'START TV RECEIVER',
-        _receiverRunning ? Icons.stop_circle_outlined : Icons.play_arrow,
-        _receiverRunning ? _stopReceiver : _startReceiver),
+      _action(
+        _receiverRunning
+            ? 'STOP RECEIVER'
+            : _startingReceiver
+                ? 'STARTING RECEIVER…'
+                : 'START TV RECEIVER',
+        _receiverRunning
+            ? Icons.stop_circle_outlined
+            : _startingReceiver
+                ? Icons.hourglass_empty
+                : Icons.play_arrow,
+        _receiverRunning ? _stopReceiver : _startingReceiver ? null : _startReceiver,
+      ),
     ]);
   }
 
-  Widget _action(String label, IconData icon, VoidCallback action) => SizedBox(
+  Widget _action(String label, IconData icon, VoidCallback? action) => SizedBox(
     width: double.infinity,
     child: OutlinedButton.icon(
       onPressed: action, icon: Icon(icon, color: _white),

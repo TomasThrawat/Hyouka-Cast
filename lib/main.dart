@@ -12,7 +12,7 @@ const _castPlatform = MethodChannel('cast_android');
 
 const _port = 38741;
 const int _targetFrameRate = 60;
-const int _screenShareMaxBitrateBps = 4_000_000;
+const int _screenShareMaxBitrateBps = 4000000;
 const Duration _statsSampleInterval = Duration(seconds: 2);
 const _black = Color(0xFF000000);
 const _white = Color(0xFFFFFFFF);

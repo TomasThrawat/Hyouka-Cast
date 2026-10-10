@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   build-arm32:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@4c901733066d54e9628b21973dc0badd8f2bd36d
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@4bbf68efd254bc02c4b5a4c3eed76e772e81cad6
     with:
       run-analyze: true
       run-tests: true
@@ -39,7 +39,7 @@ jobs:
       generate-artifact-attestation: false
 
   build-arm64:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@4c901733066d54e9628b21973dc0badd8f2bd36d
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@4bbf68efd254bc02c4b5a4c3eed76e772e81cad6
     with:
       run-analyze: true
       run-tests: true

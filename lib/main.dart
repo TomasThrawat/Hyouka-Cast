@@ -730,9 +730,9 @@ class _CastHomePageState extends State<CastHomePage> {
       }
       await _configureVideoSender(sessionPeer!);
       ensureActiveSession();
-      final offer = await sessionPeer!.createOffer();
+      final offer = await sessionPeer.createOffer();
       ensureActiveSession();
-      await sessionPeer!.setLocalDescription(offer);
+      await sessionPeer.setLocalDescription(offer);
       ensureActiveSession();
       _send({'type': 'offer', 'sdp': offer.sdp});
       if (mounted) {

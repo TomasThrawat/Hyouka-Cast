@@ -94,6 +94,7 @@ class _CastHomePageState extends State<CastHomePage> {
   int? _lastVideoBytes;
   DateTime? _lastVideoStatsAt;
   String _streamStatsText = 'Waiting for stream stats…';
+  String _streamQualityText = 'Waiting for encoder stats…';
   HttpServer? _http;
   bool _receiverUpgradePending = false;
   StreamSubscription<HttpRequest>? _httpSub;
@@ -352,6 +353,7 @@ class _CastHomePageState extends State<CastHomePage> {
     _lastVideoBytes = null;
     _lastVideoStatsAt = null;
     _streamStatsText = 'Waiting for stream stats…';
+    _streamQualityText = 'Waiting for encoder stats…';
   }
 
   Future<void> _updateStreamStats() async {
@@ -422,12 +424,23 @@ class _CastHomePageState extends State<CastHomePage> {
           : 'resolution measuring';
       final nextText = '$direction · $fpsText · $rateText · $resolutionText' +
           (isReceiving ? '' : ' · cap $capText Mbps');
-      if (mounted && nextText != _streamStatsText) {
-        setState(() => _streamStatsText = nextText);
+      final encoder = values['encoderImplementation']?.toString().trim();
+      final limitation = values['qualityLimitationReason']?.toString().trim();
+      final qualityText = isReceiving
+          ? 'Receiver stats · encoder details are on the phone'
+          : 'Encoder: ${encoder == null || encoder.isEmpty ? 'not reported' : encoder} · '
+              'limit: ${limitation == null || limitation.isEmpty ? 'not reported' : limitation}';
+      if (mounted &&
+          (nextText != _streamStatsText || qualityText != _streamQualityText)) {
+        setState(() {
+          _streamStatsText = nextText;
+          _streamQualityText = qualityText;
+        });
       } else {
         _streamStatsText = nextText;
+        _streamQualityText = qualityText;
       }
-      debugPrint('[HyoukaCast][StreamStats] $nextText');
+      debugPrint('[HyoukaCast][StreamStats] $nextText · $qualityText');
     } catch (error) {
       debugPrint('[HyoukaCast][StreamStats] Stats unavailable: $error');
     } finally {
@@ -531,7 +544,7 @@ class _CastHomePageState extends State<CastHomePage> {
 
         encodings.first.maxBitrate = bitrateBps;
         parameters.degradationPreference =
-            RTCDegradationPreference.MAINTAIN_RESOLUTION;
+            RTCDegradationPreference.MAINTAIN_FRAMERATE;
         final applied = await sender.setParameters(parameters);
         if (applied != true || !identical(peer, _peer)) return false;
 
@@ -567,16 +580,15 @@ class _CastHomePageState extends State<CastHomePage> {
         encodings.first
           ..maxFramerate = _targetFrameRate
           ..maxBitrate = _screenShareMaxBitrateBps;
-        // Preserve image detail under load; WebRTC may lower frame rate rather
-        // than aggressively reducing resolution. Keep bitrate high enough for
-        // readable text and fine details on a local Wi-Fi link.
-        parameters.degradationPreference = RTCDegradationPreference.MAINTAIN_RESOLUTION;
+        // Prioritize smooth motion under load. Native WebRTC can scale output
+        // resolution down before allowing the frame rate to collapse.
+        parameters.degradationPreference = RTCDegradationPreference.MAINTAIN_FRAMERATE;
         final applied = await sender.setParameters(parameters);
         _videoSenderRtpParametersAvailable = applied == true;
         debugPrint(
           '[HyoukaCast][Video] encoder cap=$_targetFrameRate fps, '
           'bitrate=$_screenShareMaxBitrateBps bps, '
-          'maintain-resolution; applied=$applied',
+          'maintain-framerate; applied=$applied',
         );
       }
     } catch (error) {
@@ -1008,7 +1020,7 @@ class _CastHomePageState extends State<CastHomePage> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
                         child: Text(
-                          'HYOUKA CAST  •  LIVE\n$_streamStatsText',
+                          'HYOUKA CAST  •  LIVE\n$_streamStatsText\n$_streamQualityText',
                           textAlign: TextAlign.right,
                           style: const TextStyle(color: _white, fontSize: 12, height: 1.5, letterSpacing: .3),
                         ),
@@ -1081,6 +1093,7 @@ class _CastHomePageState extends State<CastHomePage> {
     _detail(Icons.speed, 'WebRTC stream', 'Direct peer-to-peer video on local Wi-Fi'),
     _detail(Icons.high_quality, 'Capture target', 'Up to 1920 × 1080 / 60 fps, hardware permitting'),
     _detail(Icons.monitor_heart_outlined, 'Live video stats', _streamStatsText),
+    _detail(Icons.memory, 'Encoder / limiter', _streamQualityText),
     _detail(Icons.wifi, 'Network', 'Same access point; client isolation must be off'),
   ]);
 

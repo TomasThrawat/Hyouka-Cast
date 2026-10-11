@@ -54,17 +54,16 @@ void main() {
       expect(controller.currentBitrateBps, 12000000);
     });
 
-    test('reacts to sustained low bandwidth estimate', () {
+    test('reacts to sustained low bandwidth estimates below 1 Mbps', () {
       final controller = AdaptiveBitrateController();
 
       expect(
         controller.sample(availableOutgoingBitrateBps: 400000),
         isNull,
       );
-      expect(
-        controller.sample(availableOutgoingBitrateBps: 400000),
-        AdaptiveBitrateController.defaultMinimumBitrateBps,
-      );
+      final proposed = controller.sample(availableOutgoingBitrateBps: 400000);
+      expect(proposed, 340000); // 85% safety margin for a 400 kbps estimate.
+      expect(proposed! < 1000000, isTrue);
     });
 
     test('reacts immediately to severe packet loss', () {

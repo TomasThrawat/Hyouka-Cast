@@ -5,7 +5,7 @@ import 'dart:math' as math;
 /// WebRTC's native congestion control remains enabled. This only adjusts the
 /// sender's maximum bitrate when network measurements show sustained trouble.
 class AdaptiveBitrateController {
-  static const int defaultMinimumBitrateBps = 1000000;
+  static const int defaultMinimumBitrateBps = 300000;
   static const int defaultMaximumBitrateBps = 12000000;
   static const int _recoverySamples = 3;
   static const int _minimumMeaningfulChangeBps = 200000;

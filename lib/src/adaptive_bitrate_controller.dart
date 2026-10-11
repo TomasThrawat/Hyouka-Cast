@@ -6,8 +6,8 @@ import 'dart:math' as math;
 /// sender's maximum bitrate when network measurements show sustained trouble.
 class AdaptiveBitrateController {
   static const int defaultMinimumBitrateBps = 1000000;
-  static const int defaultMaximumBitrateBps = 8000000;
-  static const int _recoverySamples = 6;
+  static const int defaultMaximumBitrateBps = 12000000;
+  static const int _recoverySamples = 3;
   static const int _minimumMeaningfulChangeBps = 200000;
 
   AdaptiveBitrateController({
@@ -80,22 +80,33 @@ class AdaptiveBitrateController {
     final estimateLimited = estimatedCap != null &&
         estimatedCap < _currentBitrateBps * 0.88;
 
-    // A clearly lower native bandwidth estimate is already smoothed by WebRTC.
+    // Severe loss warrants an immediate downshift, regardless of the rate estimate.
+    if (severeLoss) {
+      _goodSamples = 0;
+      _badSamples = 0;
+      return _meaningfulTarget(
+        _clampBps((_currentBitrateBps * 0.75).round()),
+      );
+    }
+
+    // One low estimate may be a transient sample on mobile Wi-Fi. Require two
+    // consecutive low estimates before changing the app's configured ceiling.
     if (estimateLimited) {
       _goodSamples = 0;
+      _badSamples++;
+      if (_badSamples < 2) return null;
       _badSamples = 0;
       return _meaningfulTarget(estimatedCap);
     }
 
-    if (severeLoss || moderateLoss || elevatedRtt || bandwidthLimited) {
+    if (moderateLoss || elevatedRtt || bandwidthLimited) {
       _goodSamples = 0;
       _badSamples++;
-      // Severe loss warrants immediate reaction. Other signals need two
-      // consecutive samples to avoid reacting to a single transient spike.
-      if (!severeLoss && _badSamples < 2) return null;
+      // Moderate loss, elevated RTT, or the encoder's bandwidth limit need
+      // two consecutive samples before lowering the configured ceiling.
+      if (_badSamples < 2) return null;
 
-      final factor =
-          severeLoss || elevatedRtt || bandwidthLimited ? 0.75 : 0.85;
+      final factor = elevatedRtt || bandwidthLimited ? 0.75 : 0.85;
       return _meaningfulTarget(
         _clampBps((_currentBitrateBps * factor).round()),
       );
@@ -125,7 +136,8 @@ class AdaptiveBitrateController {
       }
 
       _goodSamples = 0;
-      final step = math.max(250000, (_currentBitrateBps * 0.12).round()).toInt();
+      final step =
+          math.max(750000, (_currentBitrateBps * 0.25).round()).toInt();
       final unboundedTarget =
           math.min(maximumBitrateBps, _currentBitrateBps + step).toInt();
       final target = estimatedCap == null

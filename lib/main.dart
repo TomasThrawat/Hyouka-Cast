@@ -14,7 +14,7 @@ const _castPlatform = MethodChannel('cast_android');
 
 const _port = 38741;
 const int _targetFrameRate = 60;
-const int _screenShareMaxBitrateBps = 8000000;
+const int _screenShareMaxBitrateBps = 12000000;
 const Duration _statsSampleInterval = Duration(seconds: 2);
 const _black = Color(0xFF000000);
 const _white = Color(0xFFFFFFFF);
@@ -391,6 +391,8 @@ class _CastHomePageState extends State<CastHomePage> {
           : now.difference(_lastVideoStatsAt!).inMilliseconds;
       final frames = _statNumber(values[framesKey])?.round();
       final bytes = _statNumber(values[bytesKey])?.round();
+      final frameWidth = _statNumber(values['frameWidth'])?.round();
+      final frameHeight = _statNumber(values['frameHeight'])?.round();
       var fps = _statNumber(values['framesPerSecond']);
       if ((fps == null || fps <= 0) &&
           frames != null &&
@@ -415,7 +417,10 @@ class _CastHomePageState extends State<CastHomePage> {
       final rateText = mbps == null ? 'bitrate measuring' : '${mbps.toStringAsFixed(1)} Mbps';
       final capText =
           (_activeVideoBitrateCapBps / 1000000).toStringAsFixed(1);
-      final nextText = '$direction · $fpsText · $rateText' +
+      final resolutionText = frameWidth != null && frameHeight != null
+          ? '$frameWidth×$frameHeight'
+          : 'resolution measuring';
+      final nextText = '$direction · $fpsText · $rateText · $resolutionText' +
           (isReceiving ? '' : ' · cap $capText Mbps');
       if (mounted && nextText != _streamStatsText) {
         setState(() => _streamStatsText = nextText);

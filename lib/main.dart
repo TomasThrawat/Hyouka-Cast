@@ -83,6 +83,7 @@ class _CastHomePageState extends State<CastHomePage> {
   Timer? _statsTimer;
   bool _statsSampleInFlight = false;
   int _statsGeneration = 0;
+  int _sessionGeneration = 0;
   int? _lastVideoFrameCount;
   int? _lastVideoBytes;
   DateTime? _lastVideoStatsAt;
@@ -139,19 +140,26 @@ class _CastHomePageState extends State<CastHomePage> {
 
   @override
   void dispose() {
-    _statsTimer?.cancel();
-    _statsTimer = null;
+    _sessionGeneration++;
+    _stopStreamStats();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(const []);
     _address.dispose();
     _pinInput.dispose();
-    _httpSub?.cancel();
+    unawaited(_httpSub?.cancel());
     _http?.close(force: true);
-    _socketSub?.cancel();
-    _socket?.close();
-    _peer?.close();
-    _screen?.dispose();
-    if (_rendererReady) _renderer.dispose();
+    _httpSub = null;
+    _http = null;
+    unawaited(_socketSub?.cancel());
+    _socketSub = null;
+    final socket = _socket;
+    _socket = null;
+    if (socket != null) unawaited(socket.close());
+    final peer = _peer;
+    _peer = null;
+    unawaited(_closePeerConnection(peer));
+    unawaited(_stopLocalCaptureAndBackground());
+    if (_rendererReady) unawaited(_renderer.dispose());
     super.dispose();
   }
 
@@ -256,9 +264,6 @@ class _CastHomePageState extends State<CastHomePage> {
       return;
     }
 
-    // A valid new pairing replaces the previous session. Keeping the old
-    // socket reference alive can make every retry fail with HTTP 409 if its
-    // close handshake is delayed. Only another in-flight upgrade is rejected.
     if (_receiverUpgradePending) {
       request.response.statusCode = HttpStatus.conflict;
       await request.response.close();
@@ -266,33 +271,43 @@ class _CastHomePageState extends State<CastHomePage> {
     }
 
     _receiverUpgradePending = true;
+    final sessionGeneration = ++_sessionGeneration;
     WebSocket? socket;
     try {
       final previousSocket = _socket;
       _socket = null;
-      try {
-        await _socketSub?.cancel();
-      } catch (_) {}
+      final previousPeer = _peer;
+      _peer = null;
+      _remoteDescriptionSet = false;
+      _pendingIce.clear();
+      _stopStreamStats();
+      try { await _socketSub?.cancel(); } catch (_) {}
       _socketSub = null;
       if (previousSocket != null && previousSocket.readyState == WebSocket.open) {
-        try {
-          await previousSocket.close().timeout(const Duration(seconds: 2));
-        } catch (_) {}
+        try { await previousSocket.close().timeout(const Duration(seconds: 2)); } catch (_) {}
       }
+      await _closePeerConnection(previousPeer);
+      if (sessionGeneration != _sessionGeneration || !mounted) return;
 
       socket = await WebSocketTransformer.upgrade(request);
+      if (sessionGeneration != _sessionGeneration || !mounted) {
+        try { await socket.close(); } catch (_) {}
+        return;
+      }
       _socket = socket;
       _listen(socket);
       await _createPeer();
-      if (mounted && identical(_socket, socket)) {
+      if (sessionGeneration == _sessionGeneration && identical(_socket, socket) && mounted) {
         setState(() => _status = 'Phone paired. Waiting for the screen…');
       }
     } catch (e) {
-      if (identical(_socket, socket)) _socket = null;
-      try {
-        await socket?.close();
-      } catch (_) {}
-      if (mounted) setState(() => _status = 'Connection failed: $e');
+      if (sessionGeneration == _sessionGeneration) {
+        if (identical(_socket, socket)) _socket = null;
+        try { await socket?.close(); } catch (_) {}
+        if (mounted) setState(() => _status = 'Connection failed: $e');
+      } else {
+        try { await socket?.close(); } catch (_) {}
+      }
     } finally {
       _receiverUpgradePending = false;
     }
@@ -433,32 +448,60 @@ class _CastHomePageState extends State<CastHomePage> {
     }
   }
 
+  Future<void> _closePeerConnection(RTCPeerConnection? peer) async {
+    if (peer == null) return;
+    try { await peer.close(); } catch (_) {}
+    try { await peer.dispose(); } catch (_) {}
+  }
+
   Future<void> _createPeer() async {
-    await _peer?.close();
-    _peer = await createPeerConnection({
+    final sessionGeneration = _sessionGeneration;
+    final previousPeer = _peer;
+    _peer = null;
+    await _closePeerConnection(previousPeer);
+    if (sessionGeneration != _sessionGeneration || !mounted) return;
+
+    final peer = await createPeerConnection({
       'iceServers': <Map<String, dynamic>>[],
       'sdpSemantics': 'unified-plan',
     });
+    if (sessionGeneration != _sessionGeneration || !mounted) {
+      await _closePeerConnection(peer);
+      return;
+    }
+    _peer = peer;
     _remoteDescriptionSet = false;
     _pendingIce.clear();
-    _peer!.onIceCandidate = (candidate) {
+    peer.onIceCandidate = (candidate) {
+      if (!identical(_peer, peer)) return;
       if (candidate.candidate != null && candidate.candidate!.isNotEmpty) {
         _send({'type': 'ice', 'candidate': candidate.toMap()});
       }
     };
-    _peer!.onTrack = (event) async {
-      if (event.streams.isEmpty) return;
+    peer.onTrack = (event) async {
+      if (!identical(_peer, peer) || event.streams.isEmpty) return;
       await _initRenderer();
+      if (!identical(_peer, peer)) return;
       _renderer.srcObject = event.streams.first;
       if (mounted) setState(() => _status = 'Live screen received over Wi-Fi.');
       _startStreamStats();
     };
-    _peer!.onConnectionState = (state) {
-      if (!mounted) return;
+    peer.onConnectionState = (state) {
+      if (!identical(_peer, peer) || !mounted) return;
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         setState(() => _status = 'Connected over local Wi-Fi.');
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        setState(() => _status = 'Connection failed. Check Wi-Fi client isolation.');
+        final activeSocket = _socket;
+        if (activeSocket != null) {
+          unawaited(_handleReceiverSocketClosed(
+            activeSocket,
+            status: _isTvDevice
+                ? 'Video connection failed. Receiver is ready; reconnect from the phone.'
+                : 'Video connection failed. Screen sharing stopped; reconnect to the TV.',
+          ));
+        } else {
+          setState(() => _status = 'Video connection failed. Check Wi-Fi and reconnect.');
+        }
       }
     };
   }
@@ -466,7 +509,7 @@ class _CastHomePageState extends State<CastHomePage> {
   void _listen(WebSocket socket) {
     _socketSub?.cancel();
     _socketSub = socket.listen(
-      (data) => _handleSignal(data),
+      (data) => _handleSignal(data, socket),
       onDone: () {
         unawaited(_handleReceiverSocketClosed(socket));
       },
@@ -481,81 +524,114 @@ class _CastHomePageState extends State<CastHomePage> {
 
   Future<void> _handleReceiverSocketClosed(
     WebSocket socket, {
-    String status = 'Phone stopped casting. Receiver is ready.',
+    String? status,
   }) async {
     if (!identical(_socket, socket)) return;
 
+    final cleanupGeneration = ++_sessionGeneration;
     _socket = null;
     _socketSub = null;
+    _stopStreamStats();
     final peer = _peer;
     _peer = null;
     _remoteDescriptionSet = false;
     _pendingIce.clear();
 
-    try {
-      await peer?.close();
-    } catch (_) {}
-    try {
-      await peer?.dispose();
-    } catch (_) {}
+    if (socket.readyState == WebSocket.open) {
+      try { await socket.close().timeout(const Duration(seconds: 1)); } catch (_) {}
+    }
+    if (!_isTvDevice) await _stopLocalCaptureAndBackground();
+    await _closePeerConnection(peer);
+    // A reconnect may complete while native teardown is awaited. Never clear its
+    // renderer or overwrite the state of the newer session.
+    if (cleanupGeneration != _sessionGeneration) return;
 
     if (_rendererReady) _renderer.srcObject = null;
-    if (mounted) setState(() => _status = status);
+    final nextStatus = status ?? (_isTvDevice
+        ? 'Phone stopped casting. Receiver is ready.'
+        : 'TV disconnected. Screen sharing stopped; reconnect when the TV is ready.');
+    if (mounted) {
+      setState(() {
+        _sharing = false;
+        _status = nextStatus;
+      });
+    } else {
+      _sharing = false;
+      _status = nextStatus;
+    }
   }
 
-  Future<void> _handleSignal(dynamic data) async {
+  Future<void> _handleSignal(dynamic data, WebSocket socket) async {
+    final sessionGeneration = _sessionGeneration;
+    bool isCurrentSession() =>
+        sessionGeneration == _sessionGeneration && identical(_socket, socket);
+    if (!isCurrentSession()) return;
+
     try {
       final text = data is String ? data : utf8.decode(data as List<int>);
       final msg = jsonDecode(text) as Map<String, dynamic>;
       switch (msg['type']) {
         case 'offer':
           if (_peer == null) await _createPeer();
+          if (!isCurrentSession() || _peer == null) return;
+          final peer = _peer!;
           final sdp = msg['sdp'] as String?;
           if (sdp == null) throw const FormatException('Missing offer SDP.');
-          await _peer!.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
+          await peer.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
+          if (!isCurrentSession() || !identical(_peer, peer)) return;
           _remoteDescriptionSet = true;
-          await _flushIce();
-          final answer = await _peer!.createAnswer();
-          await _peer!.setLocalDescription(answer);
+          await _flushIce(peer);
+          if (!isCurrentSession() || !identical(_peer, peer)) return;
+          final answer = await peer.createAnswer();
+          if (!isCurrentSession() || !identical(_peer, peer)) return;
+          await peer.setLocalDescription(answer);
+          if (!isCurrentSession() || !identical(_peer, peer)) return;
           _send({'type': 'answer', 'sdp': answer.sdp});
           break;
         case 'answer':
+          if (_peer == null) throw StateError('Received an answer before peer setup.');
+          final peer = _peer!;
           final sdp = msg['sdp'] as String?;
           if (sdp == null) throw const FormatException('Missing answer SDP.');
-          await _peer!.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+          await peer.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+          if (!isCurrentSession() || !identical(_peer, peer)) return;
           _remoteDescriptionSet = true;
-          await _flushIce();
+          await _flushIce(peer);
           break;
         case 'ice':
           final raw = msg['candidate'];
           if (raw is Map) {
             final m = Map<String, dynamic>.from(raw);
-            final c = RTCIceCandidate(
+            final candidate = RTCIceCandidate(
               m['candidate'] as String?,
               m['sdpMid'] as String?,
               (m['sdpMLineIndex'] as num?)?.toInt(),
             );
             if (_remoteDescriptionSet) {
-              await _peer?.addCandidate(c);
+              final peer = _peer;
+              if (peer != null && isCurrentSession()) await peer.addCandidate(candidate);
             } else {
-              _pendingIce.add(c);
+              _pendingIce.add(candidate);
             }
           }
           break;
         case 'error':
-          if (mounted) setState(() => _status = (msg['message'] as String?) ?? 'Remote error.');
+          if (mounted && isCurrentSession()) {
+            setState(() => _status = (msg['message'] as String?) ?? 'Remote error.');
+          }
           break;
       }
     } catch (e) {
-      if (mounted) setState(() => _status = 'Signaling error: $e');
+      if (mounted && isCurrentSession()) setState(() => _status = 'Signaling error: $e');
     }
   }
 
-  Future<void> _flushIce() async {
+  Future<void> _flushIce(RTCPeerConnection peer) async {
     final queued = List<RTCIceCandidate>.from(_pendingIce);
     _pendingIce.clear();
-    for (final c in queued) {
-      await _peer?.addCandidate(c);
+    for (final candidate in queued) {
+      if (!identical(_peer, peer)) return;
+      await peer.addCandidate(candidate);
     }
   }
 
@@ -590,17 +666,38 @@ class _CastHomePageState extends State<CastHomePage> {
       _status = 'Connecting to TV over Wi-Fi…';
     });
 
+    final sessionGeneration = ++_sessionGeneration;
+    WebSocket? sessionSocket;
+    RTCPeerConnection? sessionPeer;
+    void ensureActiveSession() {
+      if (sessionGeneration != _sessionGeneration ||
+          sessionSocket == null ||
+          !identical(_socket, sessionSocket) ||
+          sessionPeer == null ||
+          !identical(_peer, sessionPeer)) {
+        throw StateError('The TV connection was interrupted. Connect again.');
+      }
+    }
+
     try {
       final uri = Uri(
         scheme: 'ws', host: host, port: _port, path: '/signal',
         queryParameters: {'pin': pin},
       );
       final ws = await WebSocket.connect(uri.toString()).timeout(const Duration(seconds: 10));
+      if (!mounted || sessionGeneration != _sessionGeneration) {
+        try { await ws.close(); } catch (_) {}
+        return;
+      }
+      sessionSocket = ws;
       _socket = ws;
       _listen(ws);
       await _createPeer();
+      sessionPeer = _peer;
+      ensureActiveSession();
 
       final consent = await Helper.requestCapturePermission(fullScreenOnly: true);
+      ensureActiveSession();
       if (!consent) throw StateError('Screen-capture permission was not granted.');
 
       final initialized = await FlutterBackground.initialize(
@@ -616,20 +713,27 @@ class _CastHomePageState extends State<CastHomePage> {
           shouldRequestBatteryOptimizationsOff: false,
         ),
       );
+      ensureActiveSession();
       if (!initialized) throw StateError('Could not initialize the screen-sharing service.');
       final backgroundStarted = await FlutterBackground.enableBackgroundExecution();
+      ensureActiveSession();
       if (!backgroundStarted) throw StateError('Android did not start the foreground service.');
 
       _screen = await navigator.mediaDevices.getDisplayMedia({
         'video': true,
         'audio': false,
       });
+      ensureActiveSession();
       for (final track in _screen!.getVideoTracks()) {
-        await _peer!.addTrack(track, _screen!);
+        await sessionPeer!.addTrack(track, _screen!);
+        ensureActiveSession();
       }
-      await _configureVideoSender(_peer!);
-      final offer = await _peer!.createOffer();
-      await _peer!.setLocalDescription(offer);
+      await _configureVideoSender(sessionPeer!);
+      ensureActiveSession();
+      final offer = await sessionPeer!.createOffer();
+      ensureActiveSession();
+      await sessionPeer!.setLocalDescription(offer);
+      ensureActiveSession();
       _send({'type': 'offer', 'sdp': offer.sdp});
       if (mounted) {
         setState(() {
@@ -650,24 +754,34 @@ class _CastHomePageState extends State<CastHomePage> {
     }
   }
 
-  Future<void> _stopSharing({bool updateStatus = true}) async {
-    _stopStreamStats();
-    for (final track in _screen?.getTracks() ?? <MediaStreamTrack>[]) {
+  Future<void> _stopLocalCaptureAndBackground() async {
+    final screen = _screen;
+    _screen = null;
+    for (final track in screen?.getTracks() ?? <MediaStreamTrack>[]) {
       try { track.stop(); } catch (_) {}
     }
-    try { await _screen?.dispose(); } catch (_) {}
-    _screen = null;
-    try { await _socketSub?.cancel(); } catch (_) {}
-    _socketSub = null;
-    try { await _socket?.close(); } catch (_) {}
-    _socket = null;
-    try { await _peer?.close(); await _peer?.dispose(); } catch (_) {}
-    _peer = null;
-    _remoteDescriptionSet = false;
-    _pendingIce.clear();
+    try { await screen?.dispose(); } catch (_) {}
     if (FlutterBackground.isBackgroundExecutionEnabled) {
       try { await FlutterBackground.disableBackgroundExecution(); } catch (_) {}
     }
+  }
+
+  Future<void> _stopSharing({bool updateStatus = true}) async {
+    _sessionGeneration++;
+    _stopStreamStats();
+    final socketSub = _socketSub;
+    _socketSub = null;
+    final socket = _socket;
+    _socket = null;
+    final peer = _peer;
+    _peer = null;
+    _remoteDescriptionSet = false;
+    _pendingIce.clear();
+
+    await _stopLocalCaptureAndBackground();
+    try { await socketSub?.cancel(); } catch (_) {}
+    try { await socket?.close(); } catch (_) {}
+    await _closePeerConnection(peer);
     if (mounted) {
       setState(() {
         _sharing = false;
@@ -677,17 +791,26 @@ class _CastHomePageState extends State<CastHomePage> {
   }
 
   Future<void> _stopReceiver() async {
+    _sessionGeneration++;
     _stopStreamStats();
-    try { await _socketSub?.cancel(); } catch (_) {}
+    final socketSub = _socketSub;
     _socketSub = null;
-    try { await _socket?.close(); } catch (_) {}
+    final socket = _socket;
     _socket = null;
-    try { await _peer?.close(); await _peer?.dispose(); } catch (_) {}
+    final peer = _peer;
     _peer = null;
-    try { await _httpSub?.cancel(); } catch (_) {}
+    _remoteDescriptionSet = false;
+    _pendingIce.clear();
+    final httpSub = _httpSub;
     _httpSub = null;
-    try { await _http?.close(force: true); } catch (_) {}
+    final http = _http;
     _http = null;
+
+    try { await socketSub?.cancel(); } catch (_) {}
+    try { await socket?.close(); } catch (_) {}
+    await _closePeerConnection(peer);
+    try { await httpSub?.cancel(); } catch (_) {}
+    try { await http?.close(force: true); } catch (_) {}
     if (_rendererReady) _renderer.srcObject = null;
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     await SystemChrome.setPreferredOrientations(const []);

@@ -205,6 +205,12 @@ class _CastHomePageState extends State<CastHomePage> {
     });
 
     try {
+      // The pinned WebRTC fork supports this field trial for low-latency LAN
+      // playback. Initialize it before the first PeerConnection is created;
+      // less jitter buffering can increase stutter on unstable Wi-Fi.
+      await WebRTC.initialize(
+        options: const <String, dynamic>{'zeroPlayoutDelay': true},
+      );
       await SystemChrome.setPreferredOrientations(
         const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
       );

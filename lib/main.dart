@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import 'src/adaptive_bitrate_controller.dart';
+
 const _castPlatform = MethodChannel('cast_android');
 
 const _port = 38741;
@@ -82,6 +84,10 @@ class _CastHomePageState extends State<CastHomePage> {
   final List<RTCIceCandidate> _pendingIce = [];
   Timer? _statsTimer;
   bool _statsSampleInFlight = false;
+  final AdaptiveBitrateController _adaptiveBitrateController =
+      AdaptiveBitrateController();
+  int _activeVideoBitrateCapBps = _screenShareMaxBitrateBps;
+  bool _videoSenderRtpParametersAvailable = false;
   int _statsGeneration = 0;
   int _sessionGeneration = 0;
   int? _lastVideoFrameCount;
@@ -373,6 +379,10 @@ class _CastHomePageState extends State<CastHomePage> {
 
       final values = videoReport.values;
       final isReceiving = wantedType == 'inbound-rtp';
+      if (!isReceiving && _sharing && _videoSenderRtpParametersAvailable) {
+        await _adaptVideoSenderBitrate(peer, reports, videoReport, generation);
+        if (generation != _statsGeneration || !identical(peer, _peer)) return;
+      }
       final framesKey = isReceiving ? 'framesDecoded' : 'framesEncoded';
       final bytesKey = isReceiving ? 'bytesReceived' : 'bytesSent';
       final now = DateTime.now();
@@ -403,7 +413,10 @@ class _CastHomePageState extends State<CastHomePage> {
       final direction = isReceiving ? 'RX' : 'TX';
       final fpsText = fps == null ? 'FPS measuring' : '${fps.round()} FPS';
       final rateText = mbps == null ? 'bitrate measuring' : '${mbps.toStringAsFixed(1)} Mbps';
-      final nextText = '$direction · $fpsText · $rateText';
+      final capText =
+          (_activeVideoBitrateCapBps / 1000000).toStringAsFixed(1);
+      final nextText = '$direction · $fpsText · $rateText' +
+          (isReceiving ? '' : ' · cap $capText Mbps');
       if (mounted && nextText != _streamStatsText) {
         setState(() => _streamStatsText = nextText);
       } else {
@@ -417,7 +430,125 @@ class _CastHomePageState extends State<CastHomePage> {
     }
   }
 
+  Future<void> _adaptVideoSenderBitrate(
+    RTCPeerConnection peer,
+    List<StatsReport> reports,
+    StatsReport videoReport,
+    int statsGeneration,
+  ) async {
+    if (statsGeneration != _statsGeneration || !identical(peer, _peer)) return;
+
+    double? lossFraction;
+    double? rttSeconds;
+    String? selectedCandidatePairId;
+    for (final report in reports) {
+      if (report.type != 'remote-inbound-rtp') continue;
+      final kind = report.values['kind'] ?? report.values['mediaType'];
+      if (kind != null && kind.toString().toLowerCase() != 'video') continue;
+      lossFraction ??= _statNumber(report.values['fractionLost']);
+      rttSeconds ??= _statNumber(report.values['roundTripTime']);
+      if (lossFraction != null || rttSeconds != null) break;
+    }
+
+    for (final report in reports) {
+      if (report.type != 'transport') continue;
+      final selected =
+          report.values['selectedCandidatePairId']?.toString();
+      if (selected != null && selected.isNotEmpty) {
+        selectedCandidatePairId = selected;
+        break;
+      }
+    }
+
+    StatsReport? selectedPair;
+    for (final report in reports) {
+      if (report.type != 'candidate-pair') continue;
+      if (selectedCandidatePairId != null &&
+          report.id == selectedCandidatePairId) {
+        selectedPair = report;
+        break;
+      }
+      final values = report.values;
+      final selected = values['selected'] == true;
+      final nominated = values['nominated'] == true;
+      final succeeded = values['state']?.toString() == 'succeeded';
+      if (selectedPair == null && succeeded && (selected || nominated)) {
+        selectedPair = report;
+      }
+    }
+
+    double? availableOutgoingBps;
+    if (selectedPair != null) {
+      availableOutgoingBps =
+          _statNumber(selectedPair.values['availableOutgoingBitrate']);
+      rttSeconds ??= _statNumber(selectedPair.values['currentRoundTripTime']);
+    }
+
+    final proposedCap = _adaptiveBitrateController.sample(
+      packetLossFraction: lossFraction,
+      roundTripTimeSeconds: rttSeconds,
+      availableOutgoingBitrateBps: availableOutgoingBps,
+      qualityLimitationReason:
+          videoReport.values['qualityLimitationReason']?.toString(),
+    );
+    if (proposedCap == null ||
+        proposedCap == _activeVideoBitrateCapBps ||
+        statsGeneration != _statsGeneration ||
+        !identical(peer, _peer)) {
+      return;
+    }
+
+    final applied = await _applyVideoBitrateCap(peer, proposedCap);
+    if (!applied) {
+      _adaptiveBitrateController.confirmApplied(_activeVideoBitrateCapBps);
+    }
+  }
+
+  Future<bool> _applyVideoBitrateCap(
+    RTCPeerConnection peer,
+    int bitrateBps,
+  ) async {
+    if (!identical(peer, _peer) ||
+        !_videoSenderRtpParametersAvailable ||
+        bitrateBps < AdaptiveBitrateController.defaultMinimumBitrateBps ||
+        bitrateBps > _screenShareMaxBitrateBps) {
+      return false;
+    }
+
+    try {
+      final senders = await peer.getSenders();
+      if (!identical(peer, _peer)) return false;
+      for (final sender in senders) {
+        if (sender.track?.kind != 'video') continue;
+        final parameters = sender.parameters;
+        final encodings = parameters.encodings;
+        if (encodings == null || encodings.isEmpty) return false;
+
+        encodings.first.maxBitrate = bitrateBps;
+        parameters.degradationPreference =
+            RTCDegradationPreference.MAINTAIN_RESOLUTION;
+        final applied = await sender.setParameters(parameters);
+        if (applied != true || !identical(peer, _peer)) return false;
+
+        _activeVideoBitrateCapBps = bitrateBps;
+        _adaptiveBitrateController.confirmApplied(bitrateBps);
+        debugPrint(
+          '[HyoukaCast][AdaptiveBitrate] applied cap=' + bitrateBps.toString() + 'bps',
+        );
+        return true;
+      }
+    } catch (error) {
+      debugPrint(
+        '[HyoukaCast][AdaptiveBitrate] sender update unavailable: $error',
+      );
+    }
+    return false;
+  }
+
   Future<void> _configureVideoSender(RTCPeerConnection peer) async {
+    _adaptiveBitrateController.reset();
+    _activeVideoBitrateCapBps = _screenShareMaxBitrateBps;
+    _videoSenderRtpParametersAvailable = false;
     try {
       final senders = await peer.getSenders();
       for (final sender in senders) {
@@ -436,6 +567,7 @@ class _CastHomePageState extends State<CastHomePage> {
         // readable text and fine details on a local Wi-Fi link.
         parameters.degradationPreference = RTCDegradationPreference.MAINTAIN_RESOLUTION;
         final applied = await sender.setParameters(parameters);
+        _videoSenderRtpParametersAvailable = applied == true;
         debugPrint(
           '[HyoukaCast][Video] encoder cap=$_targetFrameRate fps, '
           'bitrate=$_screenShareMaxBitrateBps bps, '

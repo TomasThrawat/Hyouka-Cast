@@ -422,8 +422,9 @@ class _CastHomePageState extends State<CastHomePage> {
       final resolutionText = frameWidth != null && frameHeight != null
           ? '$frameWidth×$frameHeight'
           : 'resolution measuring';
-      final nextText = '$direction · $fpsText · $rateText · $resolutionText' +
-          (isReceiving ? '' : ' · cap $capText Mbps');
+      final capSuffix = isReceiving ? '' : ' · cap $capText Mbps';
+      final nextText =
+          '$direction · $fpsText · $rateText · $resolutionText$capSuffix';
       final encoder = values['encoderImplementation']?.toString().trim();
       final limitation = values['qualityLimitationReason']?.toString().trim();
       final qualityText = isReceiving
@@ -551,7 +552,7 @@ class _CastHomePageState extends State<CastHomePage> {
         _activeVideoBitrateCapBps = bitrateBps;
         _adaptiveBitrateController.confirmApplied(bitrateBps);
         debugPrint(
-          '[HyoukaCast][AdaptiveBitrate] applied cap=' + bitrateBps.toString() + 'bps',
+          '[HyoukaCast][AdaptiveBitrate] applied cap=${bitrateBps}bps',
         );
         return true;
       }
